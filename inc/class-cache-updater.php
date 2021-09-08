@@ -107,7 +107,7 @@ class Cache_Updater {
 		$all_urls = array_unique($all_urls);
 
 		// remove URLs rejected by WP Rocket
-		$cache_reject_uri = get_rocket_option('cache_reject_uri');
+		$cache_reject_uri = function_exists('get_rocket_option') ? get_rocket_option('cache_reject_uri') : false;
 		if (is_array($cache_reject_uri)) {
 			$all_urls = array_diff($all_urls, $cache_reject_uri);
 		}
