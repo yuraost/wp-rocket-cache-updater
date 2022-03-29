@@ -56,8 +56,9 @@ function cache_updater_init() {
 
 		require CACHE_UPDATER_3RD_PARTY_PATH . 'wp-rocket-no-cache-auto-purge.php';
 		require CACHE_UPDATER_3RD_PARTY_PATH . 'wp-rocket-no-cache-for-admins.php';
+        require CACHE_UPDATER_3RD_PARTY_PATH . 'hide-my-wp.php';
 
-		require CACHE_UPDATER_INC_PATH . 'admin.php';
+        require CACHE_UPDATER_INC_PATH . 'admin.php';
 	}
 
 	unset($cache_updater_requirements);
@@ -71,9 +72,11 @@ function cache_updater_init() {
  */
 register_activation_hook(CACHE_UPDATER_FILE, 'cache_updater_activation');
 function cache_updater_activation() {
-	require ABSPATH . 'wp-admin/includes/upgrade.php';
+    global $wpdb;
 
-	dbDelta(
+    require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+
+    dbDelta(
 		"CREATE TABLE {$wpdb->prefix}cache_updater (
 			URL VARCHAR(150) NOT NULL,
 			updated_time TIMESTAMP NULL DEFAULT NULL,

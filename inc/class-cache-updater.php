@@ -57,7 +57,7 @@ class Cache_Updater {
 		add_action('cache_updater_page_cached', array($this, 'updating_cache_process'));
 		add_action('save_post', array($this, 'save_post'));
 		add_action('trashed_post', array($this, 'after_delete_post'));
-		//add_action('after_delete_post', array($this, 'after_delete_post'));
+		add_action('after_delete_post', array($this, 'after_delete_post'));
 		add_action('cache_updater_update_expired', array($this, 'update_expired'));
 		add_action('wp', array($this, 'add_cronjob'));
 		add_action('init', array($this, 'maybe_run_cache_update'));
@@ -204,6 +204,8 @@ class Cache_Updater {
 		// maybe delete minified css and js files
 		$this->clean_minified_files($url);
 
+        $this->clean_cloudflare_cache($url);
+
 		// generate cache
 		$_url = esc_url_raw(home_url($url));
 
@@ -252,7 +254,8 @@ class Cache_Updater {
 	public function updating_cache_process($cache_dir_path) {
 		global $wpdb;
 
-		$mob = wp_is_mobile() ? '_mob' : '';
+        $cache_mobile = get_rocket_option('do_caching_mobile_files') == 1;
+		$mob = $cache_mobile && wp_is_mobile() ? '_mob' : '';
 
 		$this->log('updating_cache_process: start ' . $mob);
 
@@ -275,7 +278,7 @@ class Cache_Updater {
 			'js_file'.$mob => $min['js_file']
 		);
 
-		if (!empty($mob)) {
+		if (!$cache_mobile || !empty($mob)) {
 			$update['state'] = 'updated';
 		}
 
@@ -340,7 +343,9 @@ class Cache_Updater {
 			 $url
 		));
 
-		// TODO: optimize 4 blocks under
+        $clean_cf_urls = array();
+
+        // TODO: optimize 4 blocks under
 		if (is_file(WP_ROCKET_MINIFY_CACHE_PATH . $min->css_file)) {
 			$count = $wpdb->get_var($wpdb->prepare(
 				"SELECT COUNT(*)
@@ -351,6 +356,7 @@ class Cache_Updater {
 
 			if ($count == 1) {
 				unlink(WP_ROCKET_MINIFY_CACHE_PATH . $min->css_file);
+                $clean_cf_urls[] = $this->get_minify_cache_url() . $min->css_file;
 			}
 		}
 
@@ -364,6 +370,7 @@ class Cache_Updater {
 
 			if ($count == 1) {
 				unlink(WP_ROCKET_MINIFY_CACHE_PATH . $min->css_file_mob);
+                $clean_cf_urls[] = $this->get_minify_cache_url() . $min->css_file_mob;
 			}
 		}
 
@@ -377,6 +384,7 @@ class Cache_Updater {
 
 			if ($count == 1) {
 				unlink(WP_ROCKET_MINIFY_CACHE_PATH . $min->js_file);
+                $clean_cf_urls[] = $this->get_minify_cache_url() . $min->js_file;
 			}
 		}
 
@@ -390,9 +398,54 @@ class Cache_Updater {
 
 			if ($count == 1) {
 				unlink(WP_ROCKET_MINIFY_CACHE_PATH . $min->js_file_mob);
+                $clean_cf_urls[] = $this->get_minify_cache_url() . $min->js_file_mob;
 			}
 		}
+
+        if (!empty($clean_cf_urls)) {
+            $this->clean_cloudflare_cache($clean_cf_urls);
+        }
 	}
+
+    private function clean_cloudflare_cache($url) {
+        $cf_email = get_rocket_option('cloudflare_email', null);
+        $cf_api_key = (defined('WP_ROCKET_CF_API_KEY')) ? WP_ROCKET_CF_API_KEY : get_rocket_option('cloudflare_api_key', null);
+        $cf_zone_id = get_rocket_option('cloudflare_zone_id', null);
+        $is_api_keys_valid_cf = rocket_is_api_keys_valid_cloudflare($cf_email, $cf_api_key, $cf_zone_id, true);
+
+        if (is_wp_error($is_api_keys_valid_cf)) return false;
+
+        if (!is_array($url)) {
+            $url = array($url);
+        }
+
+        foreach ($url as $k => $_url) {
+            if (strpos($_url, 'https://' . $this->domain) !== 0)  {
+                $url[$k] = 'https://' . $this->domain . $_url;
+            }
+        }
+
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, 'https://api.cloudflare.com/client/v4/zones/' . $cf_zone_id . '/purge_cache');
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+        curl_setopt($ch, CURLOPT_POST, 1);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode(array('files'=>$url)));
+
+        $headers = array(
+            'X-Auth-Email: ' . $cf_email,
+            'X-Auth-Key: ' . $cf_api_key,
+            'Content-Type: application/json'
+        );
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+
+        $result = curl_exec($ch);
+
+        if (curl_errno($ch) || json_decode($result)->success !== true) {
+            $this->log('Can\'t purge Cloudflare cache: ' . trim($result, PHP_EOL));
+        }
+
+        curl_close($ch);
+    }
 
 	private function get_minified_files($cache_dir_path) {
 		$result = array(
