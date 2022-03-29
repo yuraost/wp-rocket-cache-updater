@@ -95,7 +95,6 @@ class Cache_Updater_Requirements {
 		$this->php_version_notice();
 		$this->wp_version_notice();
 		$this->wp_rocket_notice();
-		$this->wp_rocket_no_cache_auto_purge_notice();
 
 		if (!empty($this->notices)) {
 			add_action('admin_notices', array($this, 'notice'));
@@ -143,18 +142,6 @@ class Cache_Updater_Requirements {
 			$this->add_notice('WP Rocket ' . $this->wp_rocket_version);
 		} elseif (!file_exists($this->class_cache_php)) {
 			$this->add_notice('WP Rocket class Cache in file ' . $this->class_cache_php);
-		}
-	}
-
-	/**
-	 * Checks if the WP Rocket - Disable Cache Clearing is installed and activated
-	 *
-	 * @since 1.0
-	 * @author Yuriy Ostapchuk
-	 */
-	private function wp_rocket_no_cache_auto_purge_notice() {
-		if (!in_array('wp-rocket-no-cache-auto-purge/wp-rocket-no-cache-auto-purge.php', get_option('active_plugins', array()))) {
-			$this->add_notice('WP Rocket | Disable Cache Clearing activated. See here https://docs.wp-rocket.me/article/137-disable-automatic-cache-clearing');
 		}
 	}
 

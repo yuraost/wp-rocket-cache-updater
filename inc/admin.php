@@ -17,7 +17,7 @@ function cache_updater_admin_bar_menu($wp_admin_bar) {
 		'id'		=> 'cache-updater-status',
 		'title'		=> '<span class="state-depended updated">Updated</span>
 						<span class="state-depended need-update">Need update <span class="need-update-count">' . $state['need-update'] . '</span> page(s)</span>
-						<span class="state-depended updating">Updating (<span class="need-update-count">' . $state['need-update'] . '</span> page(s) left)</span>',
+						<span class="state-depended updating">Updating - <span class="need-update-count">' . $state['need-update'] . '</span> page(s) left</span>',
 		'href'		=> '#'
 	));
 
@@ -54,17 +54,23 @@ function cache_updater_enqueue_scripts() {
 
 add_action('wp_ajax_cache-updater-start', 'cache_updater_start_ajax');
 function cache_updater_start_ajax() {
+	Cache_Updater::instance()->log('cache_updater_start_ajax: ' . json_encode($_POST['type']));
+
 	if ($_POST['type'] == 'all') {
 		Cache_Updater::instance()->need_update('all');
 	}	
-	Cache_Updater::instance()->update_cache();
-	$state = Cache_Updater::instance()->get_state();
-	wp_send_json($state);
+	Cache_Updater::instance()->update_cache_async();
+	wp_send_json(array(
+		'state'			=> 'updating',
+		'need-update'	=> '...'
+	));
 }
 
 add_action('wp_ajax_cache-updater-stop', 'cache_updater_stop_ajax');
 function cache_updater_stop_ajax() {
-	Cache_Updater::instance()->stop_updating(1);
+	Cache_Updater::instance()->log('cache_updater_stop_ajax');
+
+	Cache_Updater::instance()->stop_updating();
 	$state = Cache_Updater::instance()->get_state();
 	wp_send_json($state);
 }

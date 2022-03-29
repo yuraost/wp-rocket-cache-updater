@@ -22,14 +22,13 @@ define('CACHE_UPDATER_WP_ROCKET_VERSION',	'3.8');
 define('CACHE_UPDATER_FILE',				__FILE__);
 define('CACHE_UPDATER_PATH',				plugin_dir_path(CACHE_UPDATER_FILE));
 define('CACHE_UPDATER_INC_PATH',			CACHE_UPDATER_PATH . 'inc/');
+define('CACHE_UPDATER_3RD_PARTY_PATH',			CACHE_UPDATER_INC_PATH . '3rd-party/');
 define('CACHE_UPDATER_LOG_PATH',			CACHE_UPDATER_PATH . 'log/');
 define('CACHE_UPDATER_URL',					plugin_dir_url(CACHE_UPDATER_FILE));
 define('CACHE_UPDATER_ASSETS_URL',			CACHE_UPDATER_URL . 'assets/');
 
 require CACHE_UPDATER_INC_PATH . 'class-cache-updater-requirements.php';
 require CACHE_UPDATER_INC_PATH . 'class-cache-updater.php';
-require CACHE_UPDATER_INC_PATH . 'class-cache-updater-sync.php';
-require CACHE_UPDATER_PATH . 'vendor/autoload.php';
 
 /**
  * Check requirements and run Cache Updater on plugins loaded event
@@ -54,6 +53,10 @@ function cache_updater_init() {
 
 	if ($cache_updater_requirements->check()) {
 		$GLOBALS['Cache_Updater'] = Cache_Updater::instance();
+
+		require CACHE_UPDATER_3RD_PARTY_PATH . 'wp-rocket-no-cache-auto-purge.php';
+		require CACHE_UPDATER_3RD_PARTY_PATH . 'wp-rocket-no-cache-for-admins.php';
+
 		require CACHE_UPDATER_INC_PATH . 'admin.php';
 	}
 
@@ -75,9 +78,10 @@ function cache_updater_activation() {
 			URL VARCHAR(150) NOT NULL,
 			updated_time TIMESTAMP NULL DEFAULT NULL,
 			state VARCHAR(20) NOT NULL DEFAULT 'need-update',
-			server_ip VARCHAR(20) DEFAULT NULL,
   			css_file VARCHAR(150) DEFAULT NULL,
+  			css_file_mob VARCHAR(150) DEFAULT NULL,
   			js_file VARCHAR(150) DEFAULT NULL,
+  			js_file_mob VARCHAR(150) DEFAULT NULL,
   			priority SMALLINT(6) UNSIGNED NOT NULL DEFAULT '0',
   			PRIMARY KEY (URL),
 			UNIQUE URL (URL)
@@ -86,7 +90,6 @@ function cache_updater_activation() {
 	);
 
 	Cache_Updater::instance()->refresh_urls();
-	Cache_Updater::instance()->update_cache_schedule();
 }
 
 /**
@@ -104,4 +107,5 @@ function cache_updater_deactivation() {
 	);
 
 	delete_transient('cache_updater_stop');
+	delete_transient('cache_updater_running');
 }
