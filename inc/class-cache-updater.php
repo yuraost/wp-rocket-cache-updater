@@ -103,6 +103,566 @@ class Cache_Updater
 		add_action('init', array($this, 'maybe_run_cache_update'));
 	}
 
+	/**
+	 * Main Cache_Updater instance
+	 *
+	 * @return Cache_Updater
+	 */
+	public static function instance()
+	{
+		if (!self::$_instance) {
+			self::$_instance = new self();
+		}
+
+		return self::$_instance;
+	}
+
+	public function maybe_run_cache_update()
+	{
+		if (isset($_GET['run_cache_update']) && $_GET['run_cache_update'] == 1) {
+			if ($_SERVER['SERVER_ADDR'] !== $_SERVER['REMOTE_ADDR']) {
+				$this->log('maybe_run_cache_update: SERVER_ADDR and REMOTE_ADDR do not match', 'error');
+				return false;
+			}
+
+			$this->update_cache();
+		}
+	}
+
+	public function log($msg, $type = 'log')
+	{
+		if (!file_exists(CACHE_UPDATER_LOG_PATH)) {
+			mkdir(CACHE_UPDATER_LOG_PATH);
+		}
+
+		$suffix = in_array($type, ['error', 'cloudflare']) ? '-' . $type : '';
+		file_put_contents(CACHE_UPDATER_LOG_PATH . 'cache-updater' . $suffix . '.log', gmdate("Y-m-d H:i:s") . ' ' . $msg . PHP_EOL, FILE_APPEND);
+	}
+
+	public function update_cache()
+	{
+		global $wpdb;
+
+		$this->log('update_cache: start');
+
+		// prevent multiple updating processes at the same time
+		if ($this->is_updating_cache()) {
+			$this->log('update_cache: break. Another process is running');
+			return false;
+		}
+
+		// add hook to the WP Rocket core
+		$this->add_wp_rocket_hook();
+
+		// get url for updating
+		$url = $this->get_url_for_update();
+		if (empty($url)) {
+			$this->log('update_cache: break. No urls for updating');
+			set_transient('cache_updater_running', 0);
+			return false;
+		}
+
+		if (!$this->stopping_update()) {
+			set_transient('cache_updater_running', 1);
+		}
+
+		$this->log('update_cache: updating url ' . $url);
+
+		// mark the url as currently updating
+		$wpdb->update("{$this->table}",
+			['state' => 'updating', 'updated_time' => current_time('mysql', true)],
+			['URL' => $url]
+		);
+
+		// clean all cached files (html, css, js, cloudflare)
+		$this->clean_cache_by_url($url);
+
+		// generate cache
+		$_url = esc_url_raw(home_url($url));
+
+		$args = array(
+			'timeout' => 15,
+			'user-agent' => 'WP Rocket/Preload',
+			'blocking' => true,
+			'redirection' => 0,
+			'sslverify' => false,
+			'headers' => array(
+				'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+				'HTTP_ACCEPT' => 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9'
+			)
+		);
+
+		$response = wp_remote_get($_url, $args);
+		$body = wp_remote_retrieve_body($response);
+		if (empty($body)) {
+			$this->log('update_cache: updating_error empty($body)');
+			$this->updating_error($url);
+		} else {
+			if (get_rocket_option('do_caching_mobile_files') == 1) {
+				$args['user-agent'] = 'Mozilla/5.0 (Linux; Android 8.0.0; SM-G955U Build/R16NW) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.141 Mobile Safari/537.36';
+				wp_remote_get($_url, $args);
+			}
+		}
+
+		$wpdb->update($this->table,
+			['state' => 'updating-error', 'updated_time' => current_time('mysql', true), 'css_file' => NULL, 'css_file_mob' => NULL, 'js_file' => NULL, 'js_file_mob' => NULL],
+			['state' => 'updating']
+		);
+
+		usleep(1500000);
+
+		if ($this->stopping_update()) {
+			$this->log('update_cache: updating was stop by admin');
+			set_transient('cache_updater_stop', 0);
+			set_transient('cache_updater_running', 0);
+		} else {
+			$this->update_cache_async(1);
+		}
+
+		die();
+	}
+
+	private function is_updating_cache()
+	{
+		global $wpdb;
+
+		$results = $wpdb->get_results(
+			"SELECT URL, updated_time
+			 FROM {$this->table}
+			 WHERE state = 'updating'"
+		);
+
+		$updating = false;
+		foreach ($results as $row) {
+			if ((strtotime($row->updated_time) + 60) < current_time('timestamp', true)) {
+				$this->log('is_updating_cache: updating_error ' . $row->URL);
+				$this->updating_error($row->URL);
+				continue;
+			}
+
+			$updating = true;
+		}
+
+		return $updating;
+	}
+
+	private function updating_error($url)
+	{
+		global $wpdb;
+
+		$wpdb->query($wpdb->prepare(
+			"UPDATE {$this->table} SET state = 'updating-error', updated_time = '" . current_time('mysql', true) . "' WHERE URL = %s",
+			$url
+		));
+	}
+
+	public function add_wp_rocket_hook()
+	{
+		$content = file_get_contents(CACHE_UPDATER_CLASS_CACHE_FILE);
+
+		$hook_str = 'do_action("cache_updater_page_cached", $cache_dir_path);';
+		if (strpos($content, $hook_str) === false) {
+			$content = str_replace('$this->maybe_create_nginx_mobile_file( $cache_dir_path );', '$this->maybe_create_nginx_mobile_file( $cache_dir_path );' . PHP_EOL . PHP_EOL . "\t\t" . $hook_str, $content);
+			file_put_contents(CACHE_UPDATER_CLASS_CACHE_FILE, $content);
+			$this->log('add_wp_rocket_hook: added hook');
+		}
+	}
+
+	private function get_url_for_update()
+	{
+		global $wpdb;
+
+		$url = $wpdb->get_var(
+			"SELECT URL
+			 FROM {$this->table}
+			 WHERE state = 'need-update'
+			 ORDER BY priority DESC
+			 LIMIT 1"
+		);
+
+		return $url;
+	}
+
+	public function stopping_update()
+	{
+		$val = get_transient('cache_updater_stop');
+		return !empty($val);
+	}
+
+	private function clean_cache_by_url($url)
+	{
+		// delete cached html files
+		$this->clean_files($url);
+
+		// maybe delete minified css and js files
+		$this->clean_minified_files($url);
+
+		// delete cloudflare cache
+		$this->clean_cloudflare_cache($url);
+
+		// delete pagination dir if exists
+		$this->clean_pagination($url);
+	}
+
+	private function clean_files($url)
+	{
+		$dir = WP_ROCKET_CACHE_PATH . $this->domain . $url;
+
+		if (!is_dir($dir)) return false;
+
+		$entries = [];
+		try {
+			foreach (new FilesystemIterator($dir) as $entry) {
+				$entries[] = $entry->getPathname();
+			}
+		} catch (Exception $e) {
+			$this->log('clean_files: error: ' . $e->getMessage() . '. URL: ' . $url, 'error');
+		}
+
+		$delete_dir = true;
+		foreach ($entries as $entry) {
+			if (is_dir($entry)) {
+				$delete_dir = false;
+			}
+
+			if (is_file($entry)) {
+				unlink($entry);
+			}
+		}
+
+		if ($delete_dir) {
+			rmdir($dir);
+		}
+	}
+
+	private function clean_minified_files($url)
+	{
+		global $wpdb;
+
+		$min = $wpdb->get_row($wpdb->prepare(
+			"SELECT css_file, css_file_mob, js_file, js_file_mob
+			 FROM {$this->table}
+			 WHERE URL = %s",
+			$url
+		));
+
+		$clean_cf_urls = array();
+
+		$files = array(
+			'css_file' => $min->css_file,
+			'css_file_mob' => $min->css_file_mob,
+			'js_file' => $min->js_file,
+			'js_file_mob' => $min->js_file_mob
+		);
+		$files = array_filter($files);
+		foreach ($files as $key => $file) {
+			if (is_file(WP_ROCKET_MINIFY_CACHE_PATH . $file)) {
+				$count = $wpdb->get_var($wpdb->prepare(
+					"SELECT COUNT(*)
+				    FROM {$this->table}
+				    WHERE {$key} = %s",
+					$file
+				));
+
+				if ($count == 1) {
+					unlink(WP_ROCKET_MINIFY_CACHE_PATH . $file);
+					$clean_cf_urls[] = $this->get_minify_cache_url() . $file;
+				}
+			}
+		}
+
+		if (!empty($clean_cf_urls)) {
+			$this->clean_cloudflare_cache($clean_cf_urls);
+		}
+	}
+
+	private function get_minify_cache_url()
+	{
+		if (empty($this->minify_cache_url)) {
+			$this->minify_cache_url = WP_ROCKET_MINIFY_CACHE_URL;
+
+			if (function_exists('is_plugin_active') && is_plugin_active('hide_my_wp/hide-my-wp.php')) {
+				$hide_my_wp = get_option('hide_my_wp');
+				if (!empty($hide_my_wp['new_content_path'])) {
+					$this->minify_cache_url = str_replace('/wp-content', $hide_my_wp['new_content_path'], $this->minify_cache_url);
+				}
+			}
+		}
+
+		return $this->minify_cache_url;
+	}
+
+	private function clean_cloudflare_cache($urls)
+	{
+		$cf_email = get_rocket_option('cloudflare_email', null);
+		$cf_api_key = (defined('WP_ROCKET_CF_API_KEY')) ? WP_ROCKET_CF_API_KEY : get_rocket_option('cloudflare_api_key', null);
+		$cf_zone_id = get_rocket_option('cloudflare_zone_id', null);
+		$is_api_keys_valid_cf = rocket_is_api_keys_valid_cloudflare($cf_email, $cf_api_key, $cf_zone_id, true);
+
+		if (is_wp_error($is_api_keys_valid_cf)) return false;
+
+		if (!is_array($urls)) {
+			$urls = array($urls);
+		}
+
+		$parts = [];
+		foreach ($urls as $k => $url) {
+			$pk = floor(($k + 1) / 30);
+			if (!isset($parts[$pk])) {
+				$parts[$pk] = [];
+			}
+			$parts[$pk][] = strpos($url, 'https://' . $this->domain) !== 0 ? 'https://' . $this->domain . $url : $url;
+		}
+
+		foreach ($parts as $urls) {
+			$data = json_encode(array('files' => $urls));
+
+			$ch = curl_init();
+			curl_setopt($ch, CURLOPT_URL, 'https://api.cloudflare.com/client/v4/zones/' . $cf_zone_id . '/purge_cache');
+			curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+			curl_setopt($ch, CURLOPT_POST, 1);
+			curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
+
+			$headers = array(
+				'X-Auth-Email: ' . $cf_email,
+				'X-Auth-Key: ' . $cf_api_key,
+				'Content-Type: application/json'
+			);
+			curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+
+			$result = curl_exec($ch);
+
+			$this->log('Try to purge Cloudflare cache: ' . $data, 'cloudflare');
+			if (curl_errno($ch) || json_decode($result)->success !== true) {
+				$this->log('Can\'t purge Cloudflare cache: ' . trim($result, PHP_EOL), 'cloudflare');
+			} else {
+				$this->log('Cloudflare cache purged', 'cloudflare');
+			}
+
+			curl_close($ch);
+		}
+	}
+
+	private function clean_pagination($url)
+	{
+		$pagination_dir = WP_ROCKET_CACHE_PATH . $this->domain . $url . 'page/';
+		if (is_dir($pagination_dir)) {
+			$removed_paths = $this->rrmdir($pagination_dir);
+
+			if (!empty($removed_paths)) {
+				$removed_paths = array_map(function ($path) {
+					return str_replace(WP_ROCKET_CACHE_PATH . $this->domain, '', (rtrim($path, '/') . '/'));
+				}, $removed_paths);
+				$this->clean_cloudflare_cache($removed_paths);
+			}
+		}
+	}
+
+	private function rrmdir($dir)
+	{
+		$paths = [];
+		$iterator = new RecursiveIteratorIterator(new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS), \RecursiveIteratorIterator::CHILD_FIRST);
+		foreach ($iterator as $filename => $fileInfo) {
+			if ($fileInfo->isDir()) {
+				$paths[] = $filename;
+				rmdir($filename);
+			} else {
+				unlink($filename);
+			}
+		}
+		rmdir($dir);
+		return $paths;
+	}
+
+	public function update_cache_async($autorun = 0)
+	{
+		if (!$autorun) {
+			set_transient('cache_updater_stop', 0);
+			set_transient('cache_updater_running', 1);
+		}
+
+		$url = add_query_arg(array(
+			'run_cache_update' => 1
+		), home_url());
+
+		$args = array(
+			'timeout' => 0.01,
+			'user-agent' => 'WP Rocket/Preload',
+			'blocking' => false,
+			'redirection' => 0,
+			'sslverify' => false
+		);
+
+		wp_remote_get($url, $args);
+	}
+
+	public function updating_cache_process($cache_dir_path)
+	{
+		global $wpdb;
+
+		$cache_mobile = get_rocket_option('do_caching_mobile_files') == 1;
+		$mob = $cache_mobile && wp_is_mobile() ? '_mob' : '';
+
+		$this->log('updating_cache_process: start ' . $mob);
+
+		// TODO: maybe handle cache for logged in users
+		$wp_rocket_cache_dir = WP_ROCKET_CACHE_PATH . $this->domain;
+		if (strpos($cache_dir_path, $wp_rocket_cache_dir) === false) {
+			$this->log('updating_cache_process: break. strpos(' . $cache_dir_path . ', ' . $wp_rocket_cache_dir . ') === false ' . $mob);
+			return false;
+		}
+		$url = str_replace($wp_rocket_cache_dir, '', $cache_dir_path);
+		$url = $url . '/';
+
+		$this->log('updating_cache_process: updating url ' . $url . ' ' . $mob);
+
+		$min = $this->get_minified_files($cache_dir_path);
+
+		$update = array(
+			'updated_time' => current_time('mysql', true),
+			'css_file' . $mob => $min['css_file'],
+			'js_file' . $mob => $min['js_file']
+		);
+
+		if (!$cache_mobile || !empty($mob)) {
+			$update['state'] = 'updated';
+		}
+
+		// mark the url as currently updated on the current server
+		$wpdb->update("{$this->table}",
+			$update,
+			['URL' => $url]
+		);
+	}
+
+	private function get_minified_files($cache_dir_path)
+	{
+		$result = array(
+			'css_file' => '',
+			'js_file' => ''
+		);
+
+		$cache_file = $cache_dir_path . '/index-https.html';
+		if (file_exists($cache_file)) {
+			$html = file_get_contents($cache_file);
+
+			$pattern = '~' . preg_quote($this->get_minify_cache_url(), '/') . '\S+~';
+			if (preg_match_all($pattern, $html, $links)) {
+				foreach ($links[0] as $link) {
+					$path = str_replace($this->get_minify_cache_url(), '', trim($link, '"'));
+					if (strrpos($path, '.css') === (strlen($path) - 4)) {
+						$result['css_file'] = $path;
+					} elseif (strrpos($path, '.js') === (strlen($path) - 3)) {
+						$result['js_file'] = $path;
+					}
+				}
+			}
+		}
+
+		return $result;
+	}
+
+	public function get_state()
+	{
+		global $wpdb;
+
+		$running = !empty(get_transient('cache_updater_running'));
+
+		$need_update = $wpdb->get_var(
+			"SELECT COUNT(*)
+			 FROM {$this->table}
+			 WHERE state = 'need-update'"
+		);
+
+		return array(
+			'state' => $running ? 'updating' : ($need_update ? 'need-update' : 'updated'),
+			'need-update' => $need_update
+		);
+	}
+
+	public function stop_updating()
+	{
+		global $wpdb;
+
+		$this->log('stop_updating');
+
+		$wpdb->update($this->table,
+			['state' => 'need-update', 'updated_time' => current_time('mysql', true)],
+			['state' => 'updating']
+		);
+
+		set_transient('cache_updater_stop', 1);
+		set_transient('cache_updater_running', 0);
+	}
+
+	public function post_updated($id, $post_after, $post_before)
+	{
+		$this->log('post_updated: id ' . $id);
+
+		if (isset($_GET['action']) && $_GET['action'] == 'trash') {
+			$this->log('post_updated: id ' . $id . '. Not need to update. Reason: action == trash');
+			return;
+		}
+
+		$url = $post_after->post_status == 'publish' ? get_permalink($post_after) : ($post_before->post_status == 'publish' ? get_permalink($post_before) : '');
+
+		if (empty($url)) {
+			$this->log('post_updated: break. Url is empty. Post status before: ' . $post_before->post_status . '. Post status after: ' . $post_after->post_status);
+			return;
+		}
+
+		$url = parse_url($url, PHP_URL_PATH);
+		$this->save_trash_post($id, $post_after->post_status, $url);
+	}
+
+	private function save_trash_post($id, $status, $url)
+	{
+		$this->log('save_trash_post: id ' . $id . ', status ' . $status . ', url ' . $url);
+
+		if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) {
+			$this->log('save_post: id ' . $id . '. Not need to update. Reason: DOING_AUTOSAVE');
+			return;
+		} elseif (false !== wp_is_post_revision($id)) {
+			$this->log('save_post: id ' . $id . '. Not need to update. Reason: wp_is_post_revision');
+			return;
+		}
+
+		$post_type = get_post_type($id);
+		if (!isset($this->type_update[$post_type])) {
+			$this->log('save_trash_post: not need update post type ' . $post_type);
+			return;
+		}
+
+		$this->refresh_urls();
+
+		$urls = array();
+
+		if ($status == 'publish') {
+			$urls[] = $url;
+		} else {
+			$this->clean_cache_by_url($url);
+		}
+
+		if (isset($this->type_update[$post_type])) {
+			if (!empty($this->type_update[$post_type]['url'])) {
+				$urls[] = $this->type_update[$post_type]['url'];
+			}
+			if (isset($this->type_update[$post_type]['taxonomy'])) {
+				$terms = get_the_terms($id, $this->type_update[$post_type]['taxonomy']);
+				if ($terms && !is_wp_error($terms)) {
+					foreach ($terms as $term) {
+						$urls[] = parse_url(get_term_link($term), PHP_URL_PATH);
+					}
+				}
+			}
+		}
+
+		if (!empty($urls)) {
+			$this->need_update_url($urls);
+			$this->update_cache_async();
+		}
+	}
+
 	public function refresh_urls()
 	{
 		global $wpdb;
@@ -211,410 +771,6 @@ class Cache_Updater
 		$this->log('refresh_urls: done');
 	}
 
-	public function update_cache_async($autorun = 0)
-	{
-		if (!$autorun) {
-			set_transient('cache_updater_stop', 0);
-			set_transient('cache_updater_running', 1);
-		}
-
-		$url = add_query_arg(array(
-			'run_cache_update' => 1
-		), home_url());
-
-		$args = array(
-			'timeout' => 0.01,
-			'user-agent' => 'WP Rocket/Preload',
-			'blocking' => false,
-			'redirection' => 0,
-			'sslverify' => false
-		);
-
-		wp_remote_get($url, $args);
-	}
-
-	public function maybe_run_cache_update()
-	{
-		if (isset($_GET['run_cache_update']) && $_GET['run_cache_update'] == 1) {
-			if ($_SERVER['SERVER_ADDR'] !== $_SERVER['REMOTE_ADDR']) {
-				$this->log('maybe_run_cache_update: SERVER_ADDR and REMOTE_ADDR do not match', 'error');
-				return false;
-			}
-
-			$this->update_cache();
-		}
-	}
-
-	public function update_cache()
-	{
-		global $wpdb;
-
-		$this->log('update_cache: start');
-
-		// prevent multiple updating processes at the same time
-		if ($this->is_updating_cache()) {
-			$this->log('update_cache: break. Another process is running');
-			return false;
-		}
-
-		// add hook to the WP Rocket core
-		$this->add_wp_rocket_hook();
-
-		// get url for updating
-		$url = $this->get_url_for_update();
-		if (empty($url)) {
-			$this->log('update_cache: break. No urls for updating');
-			set_transient('cache_updater_running', 0);
-			return false;
-		}
-
-		if (!$this->stopping_update()) {
-			set_transient('cache_updater_running', 1);
-		}
-
-		$this->log('update_cache: updating url ' . $url);
-
-		// mark the url as currently updating
-		$wpdb->update("{$this->table}",
-			['state' => 'updating', 'updated_time' => current_time('mysql', true)],
-			['URL' => $url]
-		);
-
-		// clean all cached files (html, css, js, cloudflare)
-		$this->clean_cache_by_url($url);
-
-		// generate cache
-		$_url = esc_url_raw(home_url($url));
-
-		$args = array(
-			'timeout' => 15,
-			'user-agent' => 'WP Rocket/Preload',
-			'blocking' => true,
-			'redirection' => 0,
-			'sslverify' => false,
-			'headers' => array(
-				'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
-				'HTTP_ACCEPT' => 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9'
-			)
-		);
-
-		$response = wp_remote_get($_url, $args);
-		$body = wp_remote_retrieve_body($response);
-		if (empty($body)) {
-			$this->log('update_cache: updating_error empty($body)');
-			$this->updating_error($url);
-		} else {
-			if (get_rocket_option('do_caching_mobile_files') == 1) {
-				$args['user-agent'] = 'Mozilla/5.0 (Linux; Android 8.0.0; SM-G955U Build/R16NW) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.141 Mobile Safari/537.36';
-				wp_remote_get($_url, $args);
-			}
-		}
-
-		$wpdb->update($this->table,
-			['state' => 'updating-error', 'updated_time' => current_time('mysql', true), 'css_file' => NULL, 'css_file_mob' => NULL, 'js_file' => NULL, 'js_file_mob' => NULL],
-			['state' => 'updating']
-		);
-
-		usleep(1500000);
-
-		if ($this->stopping_update()) {
-			$this->log('update_cache: updating was stop by admin');
-			set_transient('cache_updater_stop', 0);
-			set_transient('cache_updater_running', 0);
-		} else {
-			$this->update_cache_async(1);
-		}
-
-		die();
-	}
-
-	public function updating_cache_process($cache_dir_path)
-	{
-		global $wpdb;
-
-		$cache_mobile = get_rocket_option('do_caching_mobile_files') == 1;
-		$mob = $cache_mobile && wp_is_mobile() ? '_mob' : '';
-
-		$this->log('updating_cache_process: start ' . $mob);
-
-		// TODO: maybe handle cache for logged in users
-		$wp_rocket_cache_dir = WP_ROCKET_CACHE_PATH . $this->domain;
-		if (strpos($cache_dir_path, $wp_rocket_cache_dir) === false) {
-			$this->log('updating_cache_process: break. strpos(' . $cache_dir_path . ', ' . $wp_rocket_cache_dir . ') === false ' . $mob);
-			return false;
-		}
-		$url = str_replace($wp_rocket_cache_dir, '', $cache_dir_path);
-		$url = $url . '/';
-
-		$this->log('updating_cache_process: updating url ' . $url . ' ' . $mob);
-
-		$min = $this->get_minified_files($cache_dir_path);
-
-		$update = array(
-			'updated_time' => current_time('mysql', true),
-			'css_file' . $mob => $min['css_file'],
-			'js_file' . $mob => $min['js_file']
-		);
-
-		if (!$cache_mobile || !empty($mob)) {
-			$update['state'] = 'updated';
-		}
-
-		// mark the url as currently updated on the current server
-		$wpdb->update("{$this->table}",
-			$update,
-			['URL' => $url]
-		);
-	}
-
-	private function get_url_for_update()
-	{
-		global $wpdb;
-
-		$url = $wpdb->get_var(
-			"SELECT URL
-			 FROM {$this->table}
-			 WHERE state = 'need-update'
-			 ORDER BY priority DESC
-			 LIMIT 1"
-		);
-
-		return $url;
-	}
-
-	private function clean_cache_by_url($url)
-	{
-		// delete cached html files
-		$this->clean_files($url);
-
-		// maybe delete minified css and js files
-		$this->clean_minified_files($url);
-
-		// delete cloudflare cache
-		$this->clean_cloudflare_cache($url);
-
-		// delete pagination dir if exists
-		$this->clean_pagination($url);
-	}
-
-	private function clean_files($url)
-	{
-		$dir = WP_ROCKET_CACHE_PATH . $this->domain . $url;
-
-		if (!is_dir($dir)) return false;
-
-		$entries = [];
-		try {
-			foreach (new FilesystemIterator($dir) as $entry) {
-				$entries[] = $entry->getPathname();
-			}
-		} catch (Exception $e) {
-			$this->log('clean_files: error: ' . $e->getMessage() . '. URL: ' . $url, 'error');
-		}
-
-		$delete_dir = true;
-		foreach ($entries as $entry) {
-			if (is_dir($entry)) {
-				$delete_dir = false;
-			}
-
-			if (is_file($entry)) {
-				unlink($entry);
-			}
-		}
-
-		if ($delete_dir) {
-			rmdir($dir);
-		}
-	}
-
-	private function clean_minified_files($url)
-	{
-		global $wpdb;
-
-		$min = $wpdb->get_row($wpdb->prepare(
-			"SELECT css_file, css_file_mob, js_file, js_file_mob
-			 FROM {$this->table}
-			 WHERE URL = %s",
-			$url
-		));
-
-		$clean_cf_urls = array();
-
-		$files = array(
-			'css_file' => $min->css_file,
-			'css_file_mob' => $min->css_file_mob,
-			'js_file' => $min->js_file,
-			'js_file_mob' => $min->js_file_mob
-		);
-		$files = array_filter($files);
-		foreach ($files as $key => $file) {
-			if (is_file(WP_ROCKET_MINIFY_CACHE_PATH . $file)) {
-				$count = $wpdb->get_var($wpdb->prepare(
-					"SELECT COUNT(*)
-				    FROM {$this->table}
-				    WHERE {$key} = %s",
-					$file
-				));
-
-				if ($count == 1) {
-					unlink(WP_ROCKET_MINIFY_CACHE_PATH . $file);
-					$clean_cf_urls[] = $this->get_minify_cache_url() . $file;
-				}
-			}
-		}
-
-		if (!empty($clean_cf_urls)) {
-			$this->clean_cloudflare_cache($clean_cf_urls);
-		}
-	}
-
-	private function clean_cloudflare_cache($urls)
-	{
-		$cf_email = get_rocket_option('cloudflare_email', null);
-		$cf_api_key = (defined('WP_ROCKET_CF_API_KEY')) ? WP_ROCKET_CF_API_KEY : get_rocket_option('cloudflare_api_key', null);
-		$cf_zone_id = get_rocket_option('cloudflare_zone_id', null);
-		$is_api_keys_valid_cf = rocket_is_api_keys_valid_cloudflare($cf_email, $cf_api_key, $cf_zone_id, true);
-
-		if (is_wp_error($is_api_keys_valid_cf)) return false;
-
-		if (!is_array($urls)) {
-			$urls = array($urls);
-		}
-
-		$parts = [];
-		foreach ($urls as $k => $url) {
-			$pk = floor(($k + 1) / 30);
-			if (!isset($parts[$pk])) {
-				$parts[$pk] = [];
-			}
-			$parts[$pk][] = strpos($url, 'https://' . $this->domain) !== 0 ? 'https://' . $this->domain . $url : $url;
-		}
-
-		foreach ($parts as $urls) {
-			$data = json_encode(array('files' => $urls));
-
-			$ch = curl_init();
-			curl_setopt($ch, CURLOPT_URL, 'https://api.cloudflare.com/client/v4/zones/' . $cf_zone_id . '/purge_cache');
-			curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-			curl_setopt($ch, CURLOPT_POST, 1);
-			curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
-
-			$headers = array(
-				'X-Auth-Email: ' . $cf_email,
-				'X-Auth-Key: ' . $cf_api_key,
-				'Content-Type: application/json'
-			);
-			curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-
-			$result = curl_exec($ch);
-
-			$this->log('Try to purge Cloudflare cache: ' . $data, 'cloudflare');
-			if (curl_errno($ch) || json_decode($result)->success !== true) {
-				$this->log('Can\'t purge Cloudflare cache: ' . trim($result, PHP_EOL), 'cloudflare');
-			} else {
-				$this->log('Cloudflare cache purged', 'cloudflare');
-			}
-
-			curl_close($ch);
-		}
-	}
-
-	private function get_minified_files($cache_dir_path)
-	{
-		$result = array(
-			'css_file' => '',
-			'js_file' => ''
-		);
-
-		$cache_file = $cache_dir_path . '/index-https.html';
-		if (file_exists($cache_file)) {
-			$html = file_get_contents($cache_file);
-
-			$pattern = '~' . preg_quote($this->get_minify_cache_url(), '/') . '\S+~';
-			if (preg_match_all($pattern, $html, $links)) {
-				foreach ($links[0] as $link) {
-					$path = str_replace($this->get_minify_cache_url(), '', trim($link, '"'));
-					if (strrpos($path, '.css') === (strlen($path) - 4)) {
-						$result['css_file'] = $path;
-					} elseif (strrpos($path, '.js') === (strlen($path) - 3)) {
-						$result['js_file'] = $path;
-					}
-				}
-			}
-		}
-
-		return $result;
-	}
-
-	private function get_minify_cache_url()
-	{
-		if (empty($this->minify_cache_url)) {
-			$this->minify_cache_url = WP_ROCKET_MINIFY_CACHE_URL;
-
-			if (function_exists('is_plugin_active') && is_plugin_active('hide_my_wp/hide-my-wp.php')) {
-				$hide_my_wp = get_option('hide_my_wp');
-				if (!empty($hide_my_wp['new_content_path'])) {
-					$this->minify_cache_url = str_replace('/wp-content', $hide_my_wp['new_content_path'], $this->minify_cache_url);
-				}
-			}
-		}
-
-		return $this->minify_cache_url;
-	}
-
-	private function clean_pagination($url)
-	{
-		$pagination_dir = WP_ROCKET_CACHE_PATH . $this->domain . $url . 'page/';
-		if (is_dir($pagination_dir)) {
-			$removed_paths = $this->rrmdir($pagination_dir);
-
-			if (!empty($removed_paths)) {
-				$removed_paths = array_map(function ($path) {
-					return str_replace(WP_ROCKET_CACHE_PATH . $this->domain, '', (rtrim($path, '/') . '/'));
-				}, $removed_paths);
-				$this->clean_cloudflare_cache($removed_paths);
-			}
-		}
-	}
-
-	private function rrmdir($dir)
-	{
-		$paths = [];
-		$iterator = new RecursiveIteratorIterator(new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS), \RecursiveIteratorIterator::CHILD_FIRST);
-		foreach ($iterator as $filename => $fileInfo) {
-			if ($fileInfo->isDir()) {
-				$paths[] = $filename;
-				rmdir($filename);
-			} else {
-				unlink($filename);
-			}
-		}
-		rmdir($dir);
-		return $paths;
-	}
-
-	public function need_update($type = 'all')
-	{
-		global $wpdb;
-
-		$this->log('need_update: ' . $type);
-
-		$this->update_rocket_minify_key();
-
-		$sql = "UPDATE {$this->table} SET state = 'need-update', updated_time = '" . current_time('mysql', true) . "'";
-
-		if ($type == 'expired') {
-			$sql = $wpdb->prepare($sql . " WHERE updated_time < %s", gmdate('Y-m-d H:i:s', strtotime("-12 hour")));
-		} elseif (in_array($type, array('page', 'guide_cat', 'guide', 'post', 'regions', 'category', 'archive'))) {
-			$sql = $wpdb->prepare($sql . " WHERE type = %s", $type);
-		} else {
-			$sql = $wpdb->prepare($sql . " WHERE state != 'updating-error' OR (state = 'updating-error' AND updated_time < %s)", gmdate('Y-m-d H:i:s', strtotime("-12 hour")));
-		}
-
-		$wpdb->query($sql);
-	}
-
 	public function need_update_url($urls)
 	{
 		global $wpdb;
@@ -637,159 +793,6 @@ class Cache_Updater
 		$wp_rocket_settings['minify_css_key'] = function_exists('create_rocket_uniqid') ? create_rocket_uniqid() : '';
 		$wp_rocket_settings['minify_js_key'] = function_exists('create_rocket_uniqid') ? create_rocket_uniqid() : '';
 		update_option('wp_rocket_settings', $wp_rocket_settings);
-	}
-
-	private function updating_error($url)
-	{
-		global $wpdb;
-
-		$wpdb->query($wpdb->prepare(
-			"UPDATE {$this->table} SET state = 'updating-error', updated_time = '" . current_time('mysql', true) . "' WHERE URL = %s",
-			$url
-		));
-	}
-
-	private function is_updating_cache()
-	{
-		global $wpdb;
-
-		$results = $wpdb->get_results(
-			"SELECT URL, updated_time
-			 FROM {$this->table}
-			 WHERE state = 'updating'"
-		);
-
-		$updating = false;
-		foreach ($results as $row) {
-			if ((strtotime($row->updated_time) + 60) < current_time('timestamp', true)) {
-				$this->log('is_updating_cache: updating_error ' . $row->URL);
-				$this->updating_error($row->URL);
-				continue;
-			}
-
-			$updating = true;
-		}
-
-		return $updating;
-	}
-
-	public function get_state()
-	{
-		global $wpdb;
-
-		$running = !empty(get_transient('cache_updater_running'));
-
-		$need_update = $wpdb->get_var(
-			"SELECT COUNT(*)
-			 FROM {$this->table}
-			 WHERE state = 'need-update'"
-		);
-
-		return array(
-			'state' => $running ? 'updating' : ($need_update ? 'need-update' : 'updated'),
-			'need-update' => $need_update
-		);
-	}
-
-	public function add_wp_rocket_hook()
-	{
-		$content = file_get_contents(CACHE_UPDATER_CLASS_CACHE_FILE);
-
-		$hook_str = 'do_action("cache_updater_page_cached", $cache_dir_path);';
-		if (strpos($content, $hook_str) === false) {
-			$content = str_replace('$this->maybe_create_nginx_mobile_file( $cache_dir_path );', '$this->maybe_create_nginx_mobile_file( $cache_dir_path );' . PHP_EOL . PHP_EOL . "\t\t" . $hook_str, $content);
-			file_put_contents(CACHE_UPDATER_CLASS_CACHE_FILE, $content);
-			$this->log('add_wp_rocket_hook: added hook');
-		}
-	}
-
-	public function stop_updating()
-	{
-		global $wpdb;
-
-		$this->log('stop_updating');
-
-		$wpdb->update($this->table,
-			['state' => 'need-update', 'updated_time' => current_time('mysql', true)],
-			['state' => 'updating']
-		);
-
-		set_transient('cache_updater_stop', 1);
-		set_transient('cache_updater_running', 0);
-	}
-
-	public function stopping_update()
-	{
-		$val = get_transient('cache_updater_stop');
-		return !empty($val);
-	}
-
-	private function save_trash_post($id, $status, $url)
-	{
-		$this->log('save_trash_post: id ' . $id . ', status ' . $status . ', url ' . $url);
-
-		if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) {
-			$this->log('save_post: id ' . $id . '. Not need to update. Reason: DOING_AUTOSAVE');
-			return;
-		} elseif (false !== wp_is_post_revision($id)) {
-			$this->log('save_post: id ' . $id . '. Not need to update. Reason: wp_is_post_revision');
-			return;
-		}
-
-		$post_type = get_post_type($id);
-		if (!isset($this->type_update[$post_type])) {
-			$this->log('save_trash_post: not need update post type ' . $post_type);
-			return;
-		}
-
-		$this->refresh_urls();
-
-		$urls = array();
-
-		if ($status == 'publish') {
-			$urls[] = $url;
-		} else {
-			$this->clean_cache_by_url($url);
-		}
-
-		if (isset($this->type_update[$post_type])) {
-			if (!empty($this->type_update[$post_type]['url'])) {
-				$urls[] = $this->type_update[$post_type]['url'];
-			}
-			if (isset($this->type_update[$post_type]['taxonomy'])) {
-				$terms = get_the_terms($id, $this->type_update[$post_type]['taxonomy']);
-				if ($terms && !is_wp_error($terms)) {
-					foreach ($terms as $term) {
-						$urls[] = parse_url(get_term_link($term), PHP_URL_PATH);
-					}
-				}
-			}
-		}
-
-		if (!empty($urls)) {
-			$this->need_update_url($urls);
-			$this->update_cache_async();
-		}
-	}
-
-	public function post_updated($id, $post_after, $post_before)
-	{
-		$this->log('post_updated: id ' . $id);
-
-		if (isset($_GET['action']) && $_GET['action'] == 'trash') {
-			$this->log('post_updated: id ' . $id . '. Not need to update. Reason: action == trash');
-			return;
-		}
-
-		$url = $post_after->post_status == 'publish' ? get_permalink($post_after) : ($post_before->post_status == 'publish' ? get_permalink($post_before) : '');
-
-		if (empty($url)) {
-			$this->log('post_updated: break. Url is empty. Post status before: ' . $post_before->post_status . '. Post status after: ' . $post_after->post_status);
-			return;
-		}
-
-		$url = parse_url($url, PHP_URL_PATH);
-		$this->save_trash_post($id, $post_after->post_status, $url);
 	}
 
 	public function save_post($id, $post, $update)
@@ -825,6 +828,27 @@ class Cache_Updater
 		}
 	}
 
+	public function need_update($type = 'all')
+	{
+		global $wpdb;
+
+		$this->log('need_update: ' . $type);
+
+		$this->update_rocket_minify_key();
+
+		$sql = "UPDATE {$this->table} SET state = 'need-update', updated_time = '" . current_time('mysql', true) . "'";
+
+		if ($type == 'expired') {
+			$sql = $wpdb->prepare($sql . " WHERE updated_time < %s", gmdate('Y-m-d H:i:s', strtotime("-12 hour")));
+		} elseif (in_array($type, array('page', 'guide_cat', 'guide', 'post', 'regions', 'category', 'archive'))) {
+			$sql = $wpdb->prepare($sql . " WHERE type = %s", $type);
+		} else {
+			$sql = $wpdb->prepare($sql . " WHERE state != 'updating-error' OR (state = 'updating-error' AND updated_time < %s)", gmdate('Y-m-d H:i:s', strtotime("-12 hour")));
+		}
+
+		$wpdb->query($sql);
+	}
+
 	public function after_widget_update($instance)
 	{
 		if (is_admin()) {
@@ -847,29 +871,5 @@ class Cache_Updater
 		if (!wp_next_scheduled('cache_updater_update_expired')) {
 			wp_schedule_event(time(), 'hourly', 'cache_updater_update_expired');
 		}
-	}
-
-	public function log($msg, $type = 'log')
-	{
-		if (!file_exists(CACHE_UPDATER_LOG_PATH)) {
-			mkdir(CACHE_UPDATER_LOG_PATH);
-		}
-
-		$suffix = in_array($type, ['error', 'cloudflare']) ? '-' . $type : '';
-		file_put_contents(CACHE_UPDATER_LOG_PATH . 'cache-updater' . $suffix . '.log', gmdate("Y-m-d H:i:s") . ' ' . $msg . PHP_EOL, FILE_APPEND);
-	}
-
-	/**
-	 * Main Cache_Updater instance
-	 *
-	 * @return Cache_Updater
-	 */
-	public static function instance()
-	{
-		if (!self::$_instance) {
-			self::$_instance = new self();
-		}
-
-		return self::$_instance;
 	}
 }

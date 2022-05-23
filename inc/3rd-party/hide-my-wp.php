@@ -9,7 +9,7 @@ define('ECDEV_CONTENT_URL', content_url());
 define('ECDEV_SITE_URL', site_url());
 define('ECDEV_THEME_URI', get_stylesheet_directory_uri());
 
-add_filter('rocket_url_to_path', function($file, $url){
+add_filter('rocket_url_to_path', function ($file, $url) {
 	$hide_my_wp = get_option('hide_my_wp');
 	$plugins = get_option('rm_hide_my_wp_plugins');
 

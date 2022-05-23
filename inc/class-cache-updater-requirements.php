@@ -7,7 +7,8 @@ defined('ABSPATH') || exit();
  * @since 1.0
  * @author Yuriy Ostapchuk
  */
-class Cache_Updater_Requirements {
+class Cache_Updater_Requirements
+{
 	/**
 	 * Plugin Name
 	 *
@@ -60,22 +61,23 @@ class Cache_Updater_Requirements {
 	/**
 	 * Constructor
 	 *
-	 * @since 1.0
-	 * @author Yuriy Ostapchuk
-	 *
 	 * @param array $args {
 	 *     Arguments to populate the class properties
 	 *
-	 *     @type string $plugin_name		Plugin name
-	 *     @type string $plugin_version		Plugin version
-	 *     @type string $wp_version			Required WordPress version
-	 *     @type string $php_version		Required PHP version
-	 *     @type string $wp_rocket_version	Required WP Rocket version
+	 * @type string $plugin_name Plugin name
+	 * @type string $plugin_version Plugin version
+	 * @type string $wp_version Required WordPress version
+	 * @type string $php_version Required PHP version
+	 * @type string $wp_rocket_version Required WP Rocket version
 	 * }
+	 * @author Yuriy Ostapchuk
+	 *
+	 * @since 1.0
 	 */
-	public function __construct($args) {
+	public function __construct($args)
+	{
 		foreach ($args as $arg => $value) {
-			if (property_exists('Cache_Updater_Requirements', $arg) ) {
+			if (property_exists('Cache_Updater_Requirements', $arg)) {
 				$this->$arg = $value;
 			}
 		}
@@ -84,12 +86,13 @@ class Cache_Updater_Requirements {
 	/**
 	 * Checks if all requirements passed, if not - display a notice
 	 *
-	 * @since 1.0
+	 * @return bool
 	 * @author Yuriy Ostapchuk
 	 *
-	 * @return bool
+	 * @since 1.0
 	 */
-	public function check() {
+	public function check()
+	{
 		$this->notices = array();
 
 		$this->php_version_notice();
@@ -110,10 +113,22 @@ class Cache_Updater_Requirements {
 	 * @since 1.0
 	 * @author Yuriy Ostapchuk
 	 */
-	private function php_version_notice() {
+	private function php_version_notice()
+	{
 		if (!version_compare(PHP_VERSION, $this->php_version, '>=')) {
 			$this->add_notice('PHP ' . $this->php_version);
 		}
+	}
+
+	/**
+	 * Add notice
+	 *
+	 * @since 1.0
+	 * @author Yuriy Ostapchuk
+	 */
+	private function add_notice($notice)
+	{
+		$this->notices[] = $notice;
 	}
 
 	/**
@@ -122,7 +137,8 @@ class Cache_Updater_Requirements {
 	 * @since 1.0
 	 * @author Yuriy Ostapchuk
 	 */
-	private function wp_version_notice() {
+	private function wp_version_notice()
+	{
 		global $wp_version;
 		if (!version_compare($wp_version, $this->wp_version, '>=')) {
 			$this->add_notice('WordPress ' . $this->wp_version);
@@ -135,7 +151,8 @@ class Cache_Updater_Requirements {
 	 * @since 1.0
 	 * @author Yuriy Ostapchuk
 	 */
-	private function wp_rocket_notice() {
+	private function wp_rocket_notice()
+	{
 		if (!in_array('wp-rocket/wp-rocket.php', get_option('active_plugins', array()))) {
 			$this->add_notice('WP Rocket ' . $this->wp_rocket_version . ' activated');
 		} elseif (!version_compare(WP_ROCKET_VERSION, $this->wp_rocket_version, '>=')) {
@@ -146,22 +163,13 @@ class Cache_Updater_Requirements {
 	}
 
 	/**
-	 * Add notice
-	 *
-	 * @since 1.0
-	 * @author Yuriy Ostapchuk
-	 */
-	private function add_notice($notice) {
-		$this->notices[] = $notice;
-	}
-
-	/**
 	 * Warns if one of the requirements did not pass
 	 *
 	 * @since 1.0
 	 * @author Yuriy Ostapchuk
 	 */
-	public function notice() {
+	public function notice()
+	{
 		printf(
 			'<div class="notice notice-error">
 				<p>To function properly, <strong>%s %s</strong> requires at least: </p>

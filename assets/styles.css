@@ -1,31 +1,31 @@
 #wp-admin-bar-cache-updater a span {
-	color: #fff;
+    color: #fff;
 }
 
 #wpadminbar #wp-admin-bar-cache-updater-status a {
-	cursor: default;
-	height: 20px;
+    cursor: default;
+    height: 20px;
 }
 
 #wpadminbar #wp-admin-bar-cache-updater-status a:focus,
 #wpadminbar #wp-admin-bar-cache-updater-status a:hover,
 #wpadminbar #wp-admin-bar-cache-updater-status a:active {
-	color: #b4b9be;
-    color: rgba(240,245,250,.7);
+    color: #b4b9be;
+    color: rgba(240, 245, 250, .7);
 }
 
 #wpadminbar #wp-admin-bar-cache-updater-status * {
-	line-height: 100%;
+    line-height: 100%;
 }
 
 #wpadminbar #wp-admin-bar-cache-updater-status {
-	padding-bottom: 2px;
+    padding-bottom: 2px;
     margin-bottom: 3px;
-	border-bottom: 1px solid white;
+    border-bottom: 1px solid white;
 }
 
 #wp-admin-bar-cache-updater.updated .state-depended:not(.updated),
 #wp-admin-bar-cache-updater.need-update .state-depended:not(.need-update),
 #wp-admin-bar-cache-updater.updating .state-depended:not(.updating) {
-	display: none;
+    display: none;
 }

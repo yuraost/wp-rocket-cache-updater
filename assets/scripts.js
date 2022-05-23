@@ -1,62 +1,63 @@
-jQuery(document).ready(function($){
-	$('[id^="wp-admin-bar-cache-updater"] a').click(function(e) {
-		e.preventDefault();
-	});
+jQuery(document).ready(function ($) {
+    $('[id^="wp-admin-bar-cache-updater"] a').click(function (e) {
+        e.preventDefault();
+    });
 
-	$(document).on('click', '.update-cache-start a', function() {
-		let $this = $(this),
-			text = $this.text(),
-			href = $this.attr('href');
+    $(document).on('click', '.update-cache-start a', function () {
+        let $this = $(this),
+            text = $this.text(),
+            href = $this.attr('href');
 
-		$this.text('Starting...');
+        $this.text('Starting...');
 
-		$.post(ajaxurl, {
-			action:	'cache-updater-start',
-			type: href.replace('#', '')
-		}, function(resp) {
-			$this.text(text);
-			update_state(resp);
-		});
-	});
+        $.post(ajaxurl, {
+            action: 'cache-updater-start',
+            type: href.replace('#', '')
+        }, function (resp) {
+            $this.text(text);
+            update_state(resp);
+        });
+    });
 
-	$(document).on('click', '#wp-admin-bar-cache-updater-stop a', function() {
-		let $this = $(this),
-			text = $this.text();
-		
-		$this.text('Stopping...');
+    $(document).on('click', '#wp-admin-bar-cache-updater-stop a', function () {
+        let $this = $(this),
+            text = $this.text();
 
-		clearTimeout(state_timeout);
+        $this.text('Stopping...');
 
-		$.post(ajaxurl, {
-			action: 'cache-updater-stop'
-		}, function(resp) {
-			$this.text(text);
-			update_state(resp);
-		});
-	});
+        clearTimeout(state_timeout);
 
-	let state_timeout = 0;
-	function update_state(state) {
-		if (typeof state == 'undefined') {
-			$.post(ajaxurl, {
-				action: 'cache-updater-state'
-			}, function(resp) {
-				update_state(resp);
-			});			
+        $.post(ajaxurl, {
+            action: 'cache-updater-stop'
+        }, function (resp) {
+            $this.text(text);
+            update_state(resp);
+        });
+    });
 
-			return false;
-		}
+    let state_timeout = 0;
 
-		$('#wp-admin-bar-cache-updater').removeClass('updated updating need-update');
-		$('#wp-admin-bar-cache-updater').addClass(state['state']);
-		$('#wp-admin-bar-cache-updater .need-update-count').text(state['need-update']);
+    function update_state(state) {
+        if (typeof state == 'undefined') {
+            $.post(ajaxurl, {
+                action: 'cache-updater-state'
+            }, function (resp) {
+                update_state(resp);
+            });
 
-		if (state.state == 'updating') {
-			state_timeout = setTimeout(update_state, 10000);
-		}
-	}
+            return false;
+        }
 
-	if ($('#wp-admin-bar-cache-updater').hasClass('updating')) {
-		update_state();
-	}
+        $('#wp-admin-bar-cache-updater').removeClass('updated updating need-update');
+        $('#wp-admin-bar-cache-updater').addClass(state['state']);
+        $('#wp-admin-bar-cache-updater .need-update-count').text(state['need-update']);
+
+        if (state.state == 'updating') {
+            state_timeout = setTimeout(update_state, 10000);
+        }
+    }
+
+    if ($('#wp-admin-bar-cache-updater').hasClass('updating')) {
+        update_state();
+    }
 });
