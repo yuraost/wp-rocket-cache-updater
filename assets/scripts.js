@@ -3,30 +3,16 @@ jQuery(document).ready(function($){
 		e.preventDefault();
 	});
 
-	$(document).on('click', '#wp-admin-bar-cache-updater-start-needed a', function() {
+	$(document).on('click', '.update-cache-start a', function() {
 		let $this = $(this),
-			text = $this.text();
+			text = $this.text(),
+			href = $this.attr('href');
 
-		$this.text('Starting - needed...');
+		$this.text('Starting...');
 
 		$.post(ajaxurl, {
 			action:	'cache-updater-start',
-			type:	'needed'
-		}, function(resp) {
-			$this.text(text);
-			update_state(resp);
-		});
-	});
-
-	$(document).on('click', '#wp-admin-bar-cache-updater-start a', function() {
-		let $this = $(this),
-			text = $this.text();
-
-		$this.text('Starting - all...');
-
-		$.post(ajaxurl, {
-			action: 'cache-updater-start',
-			type:	'all'
+			type: href.replace('#', '')
 		}, function(resp) {
 			$this.text(text);
 			update_state(resp);
