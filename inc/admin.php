@@ -1,6 +1,34 @@
 <?php
+/**
+ * wp-admin hooks.
+ * @author Yuriy Ostapchuk
+ * @since 1.0
+ */
+
+/**
+ * Prevent loading this file directly.
+ */
 defined('ABSPATH') || exit();
 
+/**
+ * Enqueue admin styles and scripts.
+ * @since 1.0
+ *
+ * @hook admin_enqueue_scripts
+ */
+add_action('admin_enqueue_scripts', 'cache_updater_enqueue_admin_scripts');
+function cache_updater_enqueue_admin_scripts()
+{
+	wp_enqueue_style('cache-updater', CACHE_UPDATER_URL . 'assets/styles.css');
+	wp_enqueue_script('cache-updater', CACHE_UPDATER_URL . 'assets/scripts.js', array('jquery'), false, true);
+}
+
+/**
+ * Add admin bar menu items.
+ * @since 1.0
+ *
+ * @hook admin_bar_menu
+ */
 add_action('admin_bar_menu', 'cache_updater_admin_bar_menu', PHP_INT_MAX);
 function cache_updater_admin_bar_menu($wp_admin_bar)
 {
@@ -103,13 +131,13 @@ function cache_updater_admin_bar_menu($wp_admin_bar)
 	));
 }
 
-add_action('admin_enqueue_scripts', 'cache_updater_enqueue_scripts');
-function cache_updater_enqueue_scripts()
-{
-	wp_enqueue_style('cache-updater', CACHE_UPDATER_ASSETS_URL . 'styles.css');
-	wp_enqueue_script('cache-updater', CACHE_UPDATER_ASSETS_URL . 'scripts.js', array('jquery'), false, true);
-}
-
+/**
+ * Add AJAX action "cache-updater-start".
+ * @return array
+ * @since 1.0
+ *
+ * @hook wp_ajax_cache-updater-start
+ */
 add_action('wp_ajax_cache-updater-start', 'cache_updater_start_ajax');
 function cache_updater_start_ajax()
 {
@@ -126,6 +154,13 @@ function cache_updater_start_ajax()
 	));
 }
 
+/**
+ * Add AJAX action "cache-updater-stop".
+ * @return array
+ * @since 1.0
+ *
+ * @hook wp_ajax_cache-updater-stop
+ */
 add_action('wp_ajax_cache-updater-stop', 'cache_updater_stop_ajax');
 function cache_updater_stop_ajax()
 {
@@ -136,6 +171,13 @@ function cache_updater_stop_ajax()
 	wp_send_json($state);
 }
 
+/**
+ * Add AJAX action "cache-updater-state".
+ * @return array
+ * @since 1.0
+ *
+ * @hook wp_ajax_cache-updater-state
+ */
 add_action('wp_ajax_cache-updater-state', 'cache_updater_state_ajax');
 function cache_updater_state_ajax()
 {
@@ -143,15 +185,18 @@ function cache_updater_state_ajax()
 	wp_send_json($state);
 }
 
-// wp-rocket options
+/**
+ * Filter wp rocket options.
+ * @since 1.0
+ *
+ * @hook pre_get_rocket_option_cache_logged_user
+ */
 add_filter('pre_get_rocket_option_cache_logged_user', function () {
 	return 0;
 }, PHP_INT_MAX);
-
 add_filter('pre_get_rocket_option_purge_cron_interval', function () {
 	return 0;
 }, PHP_INT_MAX);
-
 add_filter('pre_get_rocket_option_manual_preload', function () {
 	return 0;
 }, PHP_INT_MAX);

@@ -1,78 +1,79 @@
 <?php
+/**
+ * Prevent loading this file directly.
+ */
 defined('ABSPATH') || exit();
 
 /**
- * Class to check if the current WordPress, WP Rocket and PHP versions meet our requirements
+ * Class to check if the current WordPress, WP Rocket and PHP versions meet our requirements.
  *
- * @since 1.0
  * @author Yuriy Ostapchuk
+ * @since 1.0
  */
 class Cache_Updater_Requirements
 {
 	/**
-	 * Plugin Name
-	 *
+	 * Plugin Name.
+	 * @since 1.0.0
 	 * @var string
 	 */
 	private $plugin_name;
 
 	/**
-	 * Plugin version
-	 *
+	 * Plugin version.
+	 * @since 1.0.0
 	 * @var string
 	 */
 	private $plugin_version;
 
 	/**
-	 * Required WordPress version
-	 *
+	 * Required WordPress version.
+	 * @since 1.0.0
 	 * @var string
 	 */
 	private $wp_version;
 
 	/**
-	 * Required PHP version
-	 *
+	 * Required PHP version.
+	 * @since 1.0.0
 	 * @var string
 	 */
 	private $php_version;
 
 	/**
-	 * Required WP Rocket version
-	 *
+	 * Required WP Rocket version.
+	 * @since 1.0.0
 	 * @var string
 	 */
 	private $wp_rocket_version;
 
 	/**
-	 * Path to WP Rocket class-cache.php
-	 *
+	 * Path to WP Rocket class-cache.php.
+	 * @since 1.0.0
 	 * @var string
 	 */
 	private $class_cache_php;
 
 	/**
-	 * Store notices if any
-	 *
+	 * Store notices if any.
+	 * @since 1.0.0
 	 * @var array
 	 */
 	private $notices;
 
 	/**
-	 * Constructor
-	 *
+	 * Constructor.
 	 * @param array $args {
-	 *     Arguments to populate the class properties
+	 *     Arguments to populate the class properties.
 	 *
-	 * @type string $plugin_name Plugin name
-	 * @type string $plugin_version Plugin version
-	 * @type string $wp_version Required WordPress version
-	 * @type string $php_version Required PHP version
-	 * @type string $wp_rocket_version Required WP Rocket version
+	 * @type string $plugin_name Plugin name.
+	 * @type string $plugin_version Plugin version.
+	 * @type string $wp_version Required WordPress version.
+	 * @type string $php_version Required PHP version.
+	 * @type string $wp_rocket_version Required WP Rocket version.
 	 * }
-	 * @author Yuriy Ostapchuk
-	 *
 	 * @since 1.0
+	 *
 	 */
 	public function __construct($args)
 	{
@@ -84,12 +85,11 @@ class Cache_Updater_Requirements
 	}
 
 	/**
-	 * Checks if all requirements passed, if not - display a notice
+	 * Checks if all requirements passed, if not - display a notice.
 	 *
 	 * @return bool
-	 * @author Yuriy Ostapchuk
-	 *
 	 * @since 1.0
+	 *
 	 */
 	public function check()
 	{
@@ -108,10 +108,9 @@ class Cache_Updater_Requirements
 	}
 
 	/**
-	 * Checks if the current PHP version is equal or superior to the required PHP version
+	 * Checks if the current PHP version is equal or superior to the required PHP version.
 	 *
 	 * @since 1.0
-	 * @author Yuriy Ostapchuk
 	 */
 	private function php_version_notice()
 	{
@@ -121,10 +120,9 @@ class Cache_Updater_Requirements
 	}
 
 	/**
-	 * Add notice
+	 * Add notice.
 	 *
 	 * @since 1.0
-	 * @author Yuriy Ostapchuk
 	 */
 	private function add_notice($notice)
 	{
@@ -132,10 +130,9 @@ class Cache_Updater_Requirements
 	}
 
 	/**
-	 * Checks if the current WordPress version is equal or superior to the required WordPress version
+	 * Checks if the current WordPress version is equal or superior to the required WordPress version.
 	 *
 	 * @since 1.0
-	 * @author Yuriy Ostapchuk
 	 */
 	private function wp_version_notice()
 	{
@@ -146,10 +143,9 @@ class Cache_Updater_Requirements
 	}
 
 	/**
-	 * Checks if the WP Rocket is active and the current WP Rocket version is equal or superior to the required WP Rocket version
+	 * Checks if the WP Rocket is active and the current WP Rocket version is equal or superior to the required WP Rocket version.
 	 *
 	 * @since 1.0
-	 * @author Yuriy Ostapchuk
 	 */
 	private function wp_rocket_notice()
 	{
@@ -163,10 +159,9 @@ class Cache_Updater_Requirements
 	}
 
 	/**
-	 * Warns if one of the requirements did not pass
+	 * Warns if one of the requirements did not pass.
 	 *
 	 * @since 1.0
-	 * @author Yuriy Ostapchuk
 	 */
 	public function notice()
 	{

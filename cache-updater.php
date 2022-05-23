@@ -1,40 +1,38 @@
 <?php
-/**
- * Plugin Name:    WP Rocket Cache Updater
- * Description:    Gradually updates the cache of all pages and other post types.
- * Author:        Yuriy Ostapchuk
- * Version:        1.0
+/*
+Plugin Name: WP Rocket Cache Updater
+Plugin URI: https://github.com/yuraost/wp-rocket-cache-updater
+Description: Gradually updates the cache of all pages and other post types.
+Author: Yuriy Ostapchuk
+Version: 1.0
+
+Requires PHP: 7.2
+Requires at least: 5.6
+Tested up to: 5.9.3
  */
 
 /**
- * Prevent loading this file directly
+ * Prevent loading this file directly.
  */
 defined('ABSPATH') || exit();
 
 /**
- * Cache Updater definitions
+ * Cache Updater definitions.
  */
 define('CACHE_UPDATER_NAME', 'WP Rocket Cache Updater');
 define('CACHE_UPDATER_VERSION', '1.0');
 define('CACHE_UPDATER_WP_VERSION', '5.6');
 define('CACHE_UPDATER_PHP_VERSION', '7.2');
 define('CACHE_UPDATER_WP_ROCKET_VERSION', '3.8');
-define('CACHE_UPDATER_FILE', __FILE__);
-define('CACHE_UPDATER_PATH', plugin_dir_path(CACHE_UPDATER_FILE));
-define('CACHE_UPDATER_INC_PATH', CACHE_UPDATER_PATH . 'inc/');
-define('CACHE_UPDATER_3RD_PARTY_PATH', CACHE_UPDATER_INC_PATH . '3rd-party/');
-define('CACHE_UPDATER_LOG_PATH', CACHE_UPDATER_PATH . 'log/');
-define('CACHE_UPDATER_URL', plugin_dir_url(CACHE_UPDATER_FILE));
-define('CACHE_UPDATER_ASSETS_URL', CACHE_UPDATER_URL . 'assets/');
+define('CACHE_UPDATER_URL', plugin_dir_url(__FILE__));
+define('CACHE_UPDATER_LOG_PATH', plugin_dir_path(__FILE__) . 'log/');
 
-require CACHE_UPDATER_INC_PATH . 'class-cache-updater-requirements.php';
-require CACHE_UPDATER_INC_PATH . 'class-cache-updater.php';
+require 'inc/class-cache-updater-requirements.php';
+require 'inc/class-cache-updater.php';
 
 /**
- * Check requirements and run Cache Updater on plugins loaded event
- *
+ * Check requirements and run Cache Updater on plugins loaded event.
  * @since 1.0
- * @author Yuriy Ostapchuk
  */
 add_action('plugins_loaded', 'cache_updater_init');
 function cache_updater_init()
@@ -55,23 +53,21 @@ function cache_updater_init()
 	if ($cache_updater_requirements->check()) {
 		$GLOBALS['Cache_Updater'] = Cache_Updater::instance();
 
-		require CACHE_UPDATER_3RD_PARTY_PATH . 'wp-rocket-no-cache-auto-purge.php';
-		require CACHE_UPDATER_3RD_PARTY_PATH . 'wp-rocket-no-cache-for-admins.php';
-		require CACHE_UPDATER_3RD_PARTY_PATH . 'hide-my-wp.php';
+		require 'inc/3rd-party/wp-rocket-no-cache-auto-purge.php';
+		require 'inc/3rd-party/wp-rocket-no-cache-for-admins.php';
+		require 'inc/3rd-party/hide-my-wp.php';
 
-		require CACHE_UPDATER_INC_PATH . 'admin.php';
+		require 'inc/admin.php';
 	}
 
 	unset($cache_updater_requirements);
 }
 
 /**
- * Create DB table on plugin activation
- *
+ * Create DB table on plugin activation.
  * @since 1.0
- * @author Yuriy Ostapchuk
  */
-register_activation_hook(CACHE_UPDATER_FILE, 'cache_updater_activation');
+register_activation_hook(__FILE__, 'cache_updater_activation');
 function cache_updater_activation()
 {
 	global $wpdb;
@@ -99,12 +95,11 @@ function cache_updater_activation()
 }
 
 /**
- * Delete DB table on plugin deactivation
- *
+ * Delete DB table on plugin deactivation.
+ * Delete transients.
  * @since 1.0
- * @author Yuriy Ostapchuk
  */
-register_deactivation_hook(CACHE_UPDATER_FILE, 'cache_updater_deactivation');
+register_deactivation_hook(__FILE__, 'cache_updater_deactivation');
 function cache_updater_deactivation()
 {
 	global $wpdb;

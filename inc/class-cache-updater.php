@@ -1,86 +1,72 @@
 <?php
-defined('ABSPATH') || exit();
-
 /**
  * Main plugin class Cache_Updater
  *
  * @since 1.0
  * @author Yuriy Ostapchuk
  */
+
+/**
+ * Prevent loading this file directly.
+ */
+defined('ABSPATH') || exit();
+
 class Cache_Updater
 {
 	/**
 	 * The single instance of the class
-	 *
 	 * @var Cache_Updater object
 	 */
 	private static $_instance = null;
 
 	/**
 	 * Table name
-	 *
 	 * @var string
 	 */
 	private $table;
 
 	/**
 	 * Domain
-	 *
 	 * @var string
 	 */
 	private $domain;
 
 	/**
 	 * Full URL where WP Rocket stored minified css and js
-	 *
 	 * @var string
 	 */
 	private $minify_cache_url;
 
 	/**
 	 * Cache update queue priority
-	 *
 	 * @var array
 	 */
 	private $priority_map = array(
-		'page' => 10,
-		'guide_cat' => 8,
-		'guide' => 6,
-		'archive' => 5,
-		'post' => 4,
-		'regions' => 2,
+		'page' => 2,
+		'post' => 1,
 		'category' => 0
 	);
 
 	/**
 	 * Define if need update post type and additional resources that should be updated with that type
-	 *
 	 * @var array
 	 */
 	private $type_update = array(
 		'page' => [],
-		'guide' => [
-			'url' => '/guide/',
-			'taxonomy' => 'guide_cat'
-		],
 		'post' => [
-			'url' => '/blog/',
-			'taxonomy' => 'category'
-		],
-		'regions' => [
-			'url' => '/regions/'
+			'url' => '/blog/'
 		]
 	);
 
 	/**
 	 * Constructor
-	 *
 	 * @since 1.0
-	 * @author Yuriy Ostapchuk
 	 */
 	public function __construct()
 	{
-		// Prevent duplication of hooks
+		/**
+		 * Prevent duplication of hooks
+		 */
 		if (self::$_instance) {
 			return;
 		}
@@ -91,6 +77,9 @@ class Cache_Updater
 		$this->table = $wpdb->prefix . 'cache_updater';
 		$this->domain = parse_url(home_url(), PHP_URL_HOST);
 
+		/**
+		 * Add hooks
+		 */
 		add_action('cache_updater_page_cached', array($this, 'updating_cache_process'));
 		add_action('post_updated', array($this, 'post_updated'), 10, 3);
 		add_action('save_post', array($this, 'save_post'), 10, 3);
@@ -105,8 +94,8 @@ class Cache_Updater
 
 	/**
 	 * Main Cache_Updater instance
-	 *
 	 * @return Cache_Updater
+	 * @since 1.0
 	 */
 	public static function instance()
 	{
@@ -117,6 +106,10 @@ class Cache_Updater
 		return self::$_instance;
 	}
 
+	/**
+	 * Run update cache process
+	 * @since 1.0
+	 */
 	public function maybe_run_cache_update()
 	{
 		if (isset($_GET['run_cache_update']) && $_GET['run_cache_update'] == 1) {
@@ -129,6 +122,12 @@ class Cache_Updater
 		}
 	}
 
+	/**
+	 * Write debug info into log file
+	 * @param string $msg
+	 * @param string $type Possible values are "log", "error" or "cloudflare".
+	 * @since 1.0
+	 */
 	public function log($msg, $type = 'log')
 	{
 		if (!file_exists(CACHE_UPDATER_LOG_PATH)) {
@@ -139,6 +138,10 @@ class Cache_Updater
 		file_put_contents(CACHE_UPDATER_LOG_PATH . 'cache-updater' . $suffix . '.log', gmdate("Y-m-d H:i:s") . ' ' . $msg . PHP_EOL, FILE_APPEND);
 	}
 
+	/**
+	 * Update cache process
+	 * @since 1.0
+	 */
 	public function update_cache()
 	{
 		global $wpdb;
@@ -222,6 +225,11 @@ class Cache_Updater
 		die();
 	}
 
+	/**
+	 * Check if cache is updating
+	 * @return bool
+	 * @since 1.0
+	 */
 	private function is_updating_cache()
 	{
 		global $wpdb;
@@ -246,6 +254,11 @@ class Cache_Updater
 		return $updating;
 	}
 
+	/**
+	 * Write updating error status into DB
+	 * @param string $url
+	 * @since 1.0
+	 */
 	private function updating_error($url)
 	{
 		global $wpdb;
@@ -256,6 +269,10 @@ class Cache_Updater
 		));
 	}
 
+	/**
+	 * Write necessary hook for cache updater into Wp Rocket class
+	 * @since 1.0
+	 */
 	public function add_wp_rocket_hook()
 	{
 		$content = file_get_contents(CACHE_UPDATER_CLASS_CACHE_FILE);
@@ -268,6 +285,11 @@ class Cache_Updater
 		}
 	}
 
+	/**
+	 * Get url that need to be updated.
+	 * @return string
+	 * @since 1.0
+	 */
 	private function get_url_for_update()
 	{
 		global $wpdb;
@@ -283,12 +305,21 @@ class Cache_Updater
 		return $url;
 	}
 
+	/**
+	 * Stop cache updating process.
+	 * @since 1.0
+	 */
 	public function stopping_update()
 	{
 		$val = get_transient('cache_updater_stop');
 		return !empty($val);
 	}
 
+	/**
+	 * Clean all cached resources by URL.
+	 * @param string $url
+	 * @since 1.0
+	 */
 	private function clean_cache_by_url($url)
 	{
 		// delete cached html files
@@ -304,6 +335,11 @@ class Cache_Updater
 		$this->clean_pagination($url);
 	}
 
+	/**
+	 * Remove HTML files by URL.
+	 * @param string $url
+	 * @since 1.0
+	 */
 	private function clean_files($url)
 	{
 		$dir = WP_ROCKET_CACHE_PATH . $this->domain . $url;
@@ -335,6 +371,11 @@ class Cache_Updater
 		}
 	}
 
+	/**
+	 * Remove minified CSS and JS  files by URL.
+	 * @param string $url
+	 * @since 1.0
+	 */
 	private function clean_minified_files($url)
 	{
 		global $wpdb;
@@ -376,6 +417,11 @@ class Cache_Updater
 		}
 	}
 
+	/**
+	 * Get URL of minified CSS and JS files.
+	 * @return string
+	 * @since 1.0
+	 */
 	private function get_minify_cache_url()
 	{
 		if (empty($this->minify_cache_url)) {
@@ -392,6 +438,11 @@ class Cache_Updater
 		return $this->minify_cache_url;
 	}
 
+	/**
+	 * Remove cloudflare cached resources by URLs.
+	 * @param array $urls
+	 * @since 1.0
+	 */
 	private function clean_cloudflare_cache($urls)
 	{
 		$cf_email = get_rocket_option('cloudflare_email', null);
@@ -443,6 +494,11 @@ class Cache_Updater
 		}
 	}
 
+	/**
+	 * Remove pagination HTML files by URL.
+	 * @param string $url
+	 * @since 1.0
+	 */
 	private function clean_pagination($url)
 	{
 		$pagination_dir = WP_ROCKET_CACHE_PATH . $this->domain . $url . 'page/';
@@ -458,6 +514,12 @@ class Cache_Updater
 		}
 	}
 
+	/**
+	 * Remove directory recursive.
+	 * @param string $dir
+	 * @return array $paths Removed paths
+	 * @since 1.0
+	 */
 	private function rrmdir($dir)
 	{
 		$paths = [];
@@ -474,7 +536,12 @@ class Cache_Updater
 		return $paths;
 	}
 
-	public function update_cache_async($autorun = 0)
+	/**
+	 * Run update process asynchronously.
+	 * @param bool $autorun
+	 * @since 1.0
+	 */
+	public function update_cache_async($autorun = false)
 	{
 		if (!$autorun) {
 			set_transient('cache_updater_stop', 0);
@@ -496,6 +563,11 @@ class Cache_Updater
 		wp_remote_get($url, $args);
 	}
 
+	/**
+	 * Updating cache process.
+	 * @param string $cache_dir_path
+	 * @since 1.0
+	 */
 	public function updating_cache_process($cache_dir_path)
 	{
 		global $wpdb;
@@ -505,7 +577,6 @@ class Cache_Updater
 
 		$this->log('updating_cache_process: start ' . $mob);
 
-		// TODO: maybe handle cache for logged in users
 		$wp_rocket_cache_dir = WP_ROCKET_CACHE_PATH . $this->domain;
 		if (strpos($cache_dir_path, $wp_rocket_cache_dir) === false) {
 			$this->log('updating_cache_process: break. strpos(' . $cache_dir_path . ', ' . $wp_rocket_cache_dir . ') === false ' . $mob);
@@ -535,6 +606,12 @@ class Cache_Updater
 		);
 	}
 
+	/**
+	 * Find minified CSS and JS in HTML.
+	 * @param string $cache_dir_path
+	 * @return array
+	 * @since 1.0
+	 */
 	private function get_minified_files($cache_dir_path)
 	{
 		$result = array(
@@ -562,6 +639,11 @@ class Cache_Updater
 		return $result;
 	}
 
+	/**
+	 * Get cache updating status.
+	 * @return array
+	 * @since 1.0
+	 */
 	public function get_state()
 	{
 		global $wpdb;
@@ -580,6 +662,10 @@ class Cache_Updater
 		);
 	}
 
+	/**
+	 * Stop cache updating process.
+	 * @since 1.0
+	 */
 	public function stop_updating()
 	{
 		global $wpdb;
@@ -595,6 +681,13 @@ class Cache_Updater
 		set_transient('cache_updater_running', 0);
 	}
 
+	/**
+	 * Update cache after post was updated.
+	 * @param int $id
+	 * @param object $post_after
+	 * @param object $post_before
+	 * @since 1.0
+	 */
 	public function post_updated($id, $post_after, $post_before)
 	{
 		$this->log('post_updated: id ' . $id);
@@ -615,6 +708,13 @@ class Cache_Updater
 		$this->save_trash_post($id, $post_after->post_status, $url);
 	}
 
+	/**
+	 * Run update cache process after post was saved or trashed.
+	 * @param int $id
+	 * @param string $status
+	 * @param string $url
+	 * @since 1.0
+	 */
 	private function save_trash_post($id, $status, $url)
 	{
 		$this->log('save_trash_post: id ' . $id . ', status ' . $status . ', url ' . $url);
@@ -663,31 +763,19 @@ class Cache_Updater
 		}
 	}
 
+	/**
+	 * Update cache updater DB table.
+	 * @since 1.0
+	 */
 	public function refresh_urls()
 	{
 		global $wpdb;
 
-		$all_urls = array(
-			array(
-				'url' => '/regions/',
-				'type' => 'archive',
-				'priority' => isset($this->priority_map['archive']) ? $this->priority_map['archive'] : 0
-			),
-			array(
-				'url' => '/guide/buying/seattle-forecast-buy-or-rent/',
-				'type' => 'guide',
-				'priority' => isset($this->priority_map['guide']) ? $this->priority_map['guide'] : 0
-			),
-			array(
-				'url' => '/guide/preapproval/how-much-will-my-down-payment-be/',
-				'type' => 'guide',
-				'priority' => isset($this->priority_map['guide']) ? $this->priority_map['guide'] : 0
-			)
-		);
+		$all_urls = array();
 
 		// get posts URLs
 		$posts_query = new WP_Query(array(
-			'post_type' => array('page', 'guide', 'post', 'regions'),
+			'post_type' => array('page', 'post'),
 			'posts_per_page' => -1,
 			'post_status' => 'publish'
 		));
@@ -706,7 +794,7 @@ class Cache_Updater
 
 		// get taxonomies URLs
 		$terms = get_terms(array(
-			'taxonomy' => array('guide_cat', 'category')
+			'taxonomy' => array('category')
 		));
 		if (!is_a($terms, 'WP_Error')) {
 			foreach ($terms as $term) {
@@ -771,6 +859,11 @@ class Cache_Updater
 		$this->log('refresh_urls: done');
 	}
 
+	/**
+	 * Set need-update status for URLs.
+	 * @param array $urls
+	 * @since 1.0
+	 */
 	public function need_update_url($urls)
 	{
 		global $wpdb;
@@ -787,6 +880,10 @@ class Cache_Updater
 		));
 	}
 
+	/**
+	 * Update WP Rocket options minify_css_key and minify_js_key.
+	 * @since 1.0
+	 */
 	private function update_rocket_minify_key()
 	{
 		$wp_rocket_settings = get_option('wp_rocket_settings');
@@ -795,6 +892,13 @@ class Cache_Updater
 		update_option('wp_rocket_settings', $wp_rocket_settings);
 	}
 
+	/**
+	 * Update cache after new post was inserted.
+	 * @param int $id
+	 * @param object $post
+	 * @param bool $update
+	 * @since 1.0
+	 */
 	public function save_post($id, $post, $update)
 	{
 		// handle only if insert new post
@@ -804,6 +908,11 @@ class Cache_Updater
 		$this->save_trash_post($id, $post->post_status, $url);
 	}
 
+	/**
+	 * Update cache after post was trashed.
+	 * @param int $id
+	 * @since 1.0
+	 */
 	public function trash_post($id)
 	{
 		$this->log('trash_post: id ' . $id);
@@ -811,6 +920,10 @@ class Cache_Updater
 		$this->save_trash_post($id, 'trash', $url);
 	}
 
+	/**
+	 * Update cache after theme settings was updated.
+	 * @since 1.0
+	 */
 	public function after_save_theme_settings()
 	{
 		$option_pages = array(
@@ -828,6 +941,11 @@ class Cache_Updater
 		}
 	}
 
+	/**
+	 * Set need-update status by type.
+	 * @param string $type
+	 * @since 1.0
+	 */
 	public function need_update($type = 'all')
 	{
 		global $wpdb;
@@ -849,6 +967,12 @@ class Cache_Updater
 		$wpdb->query($sql);
 	}
 
+	/**
+	 * Update cache after widget was updated.
+	 * @param object $instance
+	 * @return object
+	 * @since 1.0
+	 */
 	public function after_widget_update($instance)
 	{
 		if (is_admin()) {
@@ -859,6 +983,10 @@ class Cache_Updater
 		return $instance;
 	}
 
+	/**
+	 * Update expired URLs.
+	 * @since 1.0
+	 */
 	public function update_expired()
 	{
 		$this->log('update_expired');
@@ -866,6 +994,10 @@ class Cache_Updater
 		$this->update_cache_async();
 	}
 
+	/**
+	 * Add cronjob for trigger update expired URLs.
+	 * @since 1.0
+	 */
 	public function add_cronjob()
 	{
 		if (!wp_next_scheduled('cache_updater_update_expired')) {
