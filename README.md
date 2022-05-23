@@ -1,10 +1,5 @@
 # WP Rocket Cache Updater
 WordPress plugin. Gradually updates the cache of all pages and other post types.
-Automatically synchronizes the cache between all instances in AWS Auto Scaling Group. Should be defined environment variables:
-- AWS_ACCESS_KEY
-- AWS_SECRET_KEY
-- AWS_REGION
-- ASG_NAME
 
 ## Requirements
 - PHP 7.2 and above.
@@ -17,8 +12,4 @@ Automatically synchronizes the cache between all instances in AWS Auto Scaling G
 ```
 git clone https://github.com/yuraost/wp-rocket-cache-updater
 ```
-2. Install AWS SDK for PHP
-```
-composer install
-```
-3. Install as a regular WordPress plugin
+2. Install as a regular WordPress plugin
